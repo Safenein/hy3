@@ -14,7 +14,7 @@
 #include "Hy3Layout.hpp"
 #include "Hy3Node.hpp"
 #include "globals.hpp"
-#include "src/managers/input/InputManager.hpp"
+#include <hyprland/src/managers/input/InputManager.hpp>
 
 const float MIN_RATIO = 0.0f;
 
@@ -178,12 +178,12 @@ void Hy3Node::focus(bool warp) {
 	case Hy3NodeType::Window: {
 		auto window = this->data.as_window();
 		window->setHidden(false);
-		Desktop::focusState()->fullWindowFocus(window);
+		Desktop::focusState()->fullWindowFocus(window, Desktop::FOCUS_REASON_KEYBIND);
 		if (warp) Hy3Layout::warpCursorToBox(window->m_position, window->m_size);
 		break;
 	}
 	case Hy3NodeType::Group: {
-		Desktop::focusState()->fullWindowFocus(nullptr);
+		Desktop::focusState()->fullWindowFocus(nullptr, Desktop::FOCUS_REASON_OTHER);
 		this->raiseToTop();
 
 		if (warp) Hy3Layout::warpCursorToBox(this->position, this->size);
@@ -221,7 +221,7 @@ PHLWINDOW Hy3Node::bringToTop() {
 
 void Hy3Node::focusWindow() {
 	auto window = this->bringToTop();
-	if (window != nullptr) Desktop::focusState()->fullWindowFocus(window);
+	if (window != nullptr) Desktop::focusState()->fullWindowFocus(window, Desktop::FOCUS_REASON_KEYBIND);
 }
 
 void markGroupFocusedRecursive(Hy3GroupData& group) {

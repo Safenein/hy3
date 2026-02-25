@@ -2,10 +2,109 @@
 #include <hyprland/src/config/ConfigDataValues.hpp>
 #include <hyprland/src/plugins/PluginAPI.hpp>
 #include <hyprland/src/version.h>
+#include <hyprland/src/event/EventBus.hpp>
+#include <hyprland/src/render/Renderer.hpp>
+#include <hyprland/src/desktop/state/FocusState.hpp>
+#include <hyprutils/signal/Signal.hpp>
 #include <hyprlang.hpp>
 
 #include "dispatchers.hpp"
 #include "globals.hpp"
+
+using Hyprutils::Signal::CHyprSignalListener;
+
+// Storage for event hook listeners (released on plugin exit)
+static std::vector<CHyprSignalListener> g_listeners;
+
+// Event hook functions
+static void renderHook(eRenderStage stage) {
+	if (stage != RENDER_POST_WINDOW) return;
+
+	for (auto* layout: g_Hy3Instances) {
+		for (auto& entry: layout->tab_groups) {
+			if (entry.bar.destroy) continue;
+			auto* monitor = g_pHyprOpenGL->m_renderData.pMonitor.get();
+			if (!valid(entry.workspace) || entry.workspace->m_monitor.get() != monitor) continue;
+			auto element = makeUnique<Hy3TabPassElement>(&entry);
+			g_pHyprRenderer->m_renderPass.add(std::move(element));
+		}
+	}
+}
+
+static void windowTitleHook(PHLWINDOW window) {
+	if (!window) return;
+	auto* layout = getHy3Layout(window->m_workspace);
+	if (!layout) return;
+	for (auto& entry: layout->tab_groups) {
+		entry.bar.dirty = true;
+		entry.tick();
+	}
+}
+
+static void windowActiveHook(PHLWINDOW window, Desktop::eFocusReason) {
+	if (!window) return;
+	auto* layout = getHy3Layout(window->m_workspace);
+	if (!layout) return;
+	auto* node = layout->getNodeFromWindow(window.get());
+	if (node != nullptr) {
+		node->markFocused();
+		auto* root = node;
+		while (root->parent != nullptr) root = root->parent;
+		root->recalcSizePosRecursive();
+	}
+}
+
+static void windowUrgentHook(PHLWINDOW window) {
+	if (!window) return;
+	auto* layout = getHy3Layout(window->m_workspace);
+	if (!layout) return;
+	auto* node = layout->getNodeFromWindow(window.get());
+	if (node != nullptr) {
+		node->updateTabBarRecursive();
+	}
+}
+
+static void tickHook() {
+	for (auto* layout: g_Hy3Instances) {
+		auto iter = layout->tab_groups.begin();
+		while (iter != layout->tab_groups.end()) {
+			if (iter->bar.destroy) {
+				iter = layout->tab_groups.erase(iter);
+			} else {
+				iter->tick();
+				iter = std::next(iter);
+			}
+		}
+	}
+}
+
+static void mouseButtonHook(IPointer::SButtonEvent event, Event::SCallbackInfo& info) {
+	if (event.state != WL_POINTER_BUTTON_STATE_PRESSED) return;
+	for (auto* layout: g_Hy3Instances) {
+		for (auto& tab_group: layout->tab_groups) {
+			auto [box, scaledBox] = tab_group.getRenderBB();
+			auto mousePos = g_pInputManager->getMouseCoordsInternal()
+			              - g_pHyprOpenGL->m_renderData.pMonitor->m_position;
+			if (box.containsPoint(mousePos)) {
+				auto relative = (mousePos.x - box.x) / box.w;
+				int i = 0;
+				for (auto& entry: tab_group.bar.entries) {
+					if (entry.destroying) continue;
+					auto entryStart = entry.offset->value();
+					auto entryEnd = entryStart + entry.width->value();
+					if (relative >= entryStart && relative < entryEnd) {
+						if (entry.node.data.is_window()) {
+							entry.node.focus(true);
+						}
+						break;
+					}
+					i++;
+				}
+				break;
+			}
+		}
+	}
+}
 
 APICALL EXPORT std::string PLUGIN_API_VERSION() { return HYPRLAND_API_VERSION; }
 
@@ -82,14 +181,25 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 
 #undef CONF
 
-	g_Hy3Layout = std::make_unique<Hy3Layout>();
-	HyprlandAPI::addLayout(PHANDLE, "hy3", g_Hy3Layout.get());
+	HyprlandAPI::addTiledAlgo(PHANDLE, "hy3", &typeid(Hy3Layout),
+	    []() -> UP<Layout::ITiledAlgorithm> { return makeUnique<Hy3Layout>(); });
 
 	registerDispatchers();
+
+	// Register event hooks (listeners are stored to keep them alive)
+	g_listeners.push_back(Event::bus()->m_events.render.stage.listen(renderHook));
+	g_listeners.push_back(Event::bus()->m_events.window.title.listen(windowTitleHook));
+	g_listeners.push_back(Event::bus()->m_events.window.active.listen(windowActiveHook));
+	g_listeners.push_back(Event::bus()->m_events.window.urgent.listen(windowUrgentHook));
+	g_listeners.push_back(Event::bus()->m_events.tick.listen(tickHook));
+	g_listeners.push_back(Event::bus()->m_events.input.mouse.button.listen(mouseButtonHook));
 
 	HyprlandAPI::reloadConfig();
 
 	return {"hy3", "i3 like layout for hyprland", "outfoxxed", "0.1"};
 }
 
-APICALL EXPORT void PLUGIN_EXIT() {}
+APICALL EXPORT void PLUGIN_EXIT() {
+	g_listeners.clear();
+	HyprlandAPI::removeAlgo(PHANDLE, "hy3");
+}

@@ -1,16 +1,25 @@
 #pragma once
 
+#include <set>
 #include <type_traits>
 
 #include <hyprland/src/desktop/Workspace.hpp>
 #include <hyprland/src/plugins/PluginAPI.hpp>
+#include <hyprland/src/layout/algorithm/Algorithm.hpp>
 #include <hyprlang.hpp>
 
 #include "Hy3Layout.hpp"
 #include "log.hpp"
 
 inline HANDLE PHANDLE = nullptr;
-inline std::unique_ptr<Hy3Layout> g_Hy3Layout;
+inline std::set<Hy3Layout*> g_Hy3Instances;
+
+inline Hy3Layout* getHy3Layout(PHLWORKSPACE ws) {
+	if (!ws || !ws->m_space) return nullptr;
+	auto algo = ws->m_space->algorithm();
+	if (!algo) return nullptr;
+	return dynamic_cast<Hy3Layout*>(algo->tiledAlgo().get());
+}
 
 inline void errorNotif() {
 	HyprlandAPI::addNotificationV2(

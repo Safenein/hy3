@@ -1574,6 +1574,13 @@ void Hy3Layout::applyNodeDataToWindow(Hy3Node* node, bool no_animation) {
 		window->updateWindowDecos();
 	}
 
+	// Sync the layout target's stored box so that Hyprland's recalc() produces
+	// a visible window. Use qualified base class call to set m_box without
+	// triggering CWindowTarget::updatePos() which would overwrite our gaps.
+	auto target = window->layoutTarget();
+	if (target)
+		target.get()->Layout::ITarget::setPositionGlobal(nodeBox);
+
 	window->m_workspace->updateWindows();
 }
 

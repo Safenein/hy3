@@ -1578,8 +1578,25 @@ void Hy3Layout::applyNodeDataToWindow(Hy3Node* node, bool no_animation) {
 	// a visible window. Use qualified base class call to set m_box without
 	// triggering CWindowTarget::updatePos() which would overwrite our gaps.
 	auto target = window->layoutTarget();
-	if (target)
-		target.get()->Layout::ITarget::setPositionGlobal(nodeBox);
+	if (target) {
+		auto targetBox = nodeBox;
+
+		// Adjust for tab bar(s): Hyprland's updatePos doesn't know about hy3's
+		// tab bar, so shrink the box to exclude tab bar space.
+		static const auto tab_bar_height = ConfigValue<Hyprlang::INT>("plugin:hy3:tabs:height");
+		static const auto tab_bar_padding = ConfigValue<Hyprlang::INT>("plugin:hy3:tabs:padding");
+		double tab_offset = 0;
+		for (auto* p = node->parent; p != nullptr; p = p->parent) {
+			if (p->data.is_group() && p->data.as_group().layout == Hy3GroupLayout::Tabbed)
+				tab_offset += *tab_bar_height + *tab_bar_padding;
+		}
+		if (tab_offset > 0) {
+			targetBox.y += tab_offset;
+			targetBox.h -= tab_offset;
+		}
+
+		target.get()->Layout::ITarget::setPositionGlobal(targetBox);
+	}
 
 	window->m_workspace->updateWindows();
 }

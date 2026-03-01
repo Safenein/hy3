@@ -10,7 +10,6 @@
 #include <hyprland/src/desktop/Workspace.hpp>
 #include <hyprland/src/desktop/rule/Engine.hpp>
 #include <hyprland/src/helpers/math/Direction.hpp>
-#include <hyprland/src/layout/LayoutManager.hpp>
 #include <hyprland/src/managers/PointerManager.hpp>
 #include <hyprland/src/managers/SeatManager.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
@@ -474,9 +473,7 @@ void Hy3Layout::resizeTarget(const Vector2D& delta, SP<Layout::ITarget> target, 
 }
 
 std::expected<void, std::string> Hy3Layout::layoutMsg(const std::string_view& sv) {
-	std::string content(sv);
-
-	if (content == "togglesplit") {
+	if (sv == "togglesplit") {
 		auto last_window = Desktop::focusState()->window();
 		if (!last_window) return {};
 
@@ -987,25 +984,20 @@ void Hy3Layout::moveNodeToWorkspace(
 		auto* target_layout = getHy3Layout(workspace);
 		if (target_layout && target_layout != this) {
 			// Cross-workspace transfer: splice nodes to target layout
-			std::vector<Hy3Node*> subtree_nodes;
-			std::function<void(Hy3Node&)> collect = [&](Hy3Node& n) {
-				subtree_nodes.push_back(&n);
+			std::function<void(Hy3Node&)> transfer = [&](Hy3Node& n) {
 				if (n.data.is_group()) {
 					for (auto* child: n.data.as_group().children) {
-						collect(*child);
+						transfer(*child);
 					}
 				}
-			};
-			collect(*node);
-
-			for (auto* n: subtree_nodes) {
 				auto it = std::find_if(this->nodes.begin(), this->nodes.end(),
-				    [n](auto& x) { return &x == n; });
+				    [&n](auto& x) { return &x == &n; });
 				if (it != this->nodes.end()) {
 					target_layout->nodes.splice(target_layout->nodes.end(), this->nodes, it);
-					n->layout = target_layout;
+					n.layout = target_layout;
 				}
-			}
+			};
+			transfer(*node);
 
 			target_layout->insertNode(*node);
 		} else {
@@ -1520,15 +1512,7 @@ void Hy3Layout::applyNodeDataToWindow(Hy3Node* node, bool no_animation) {
 		    (uintptr_t) window.get()
 		);
 		errorNotif();
-		// Inline cleanup - remove unmapped window from tiling
-		auto* wnode = this->getNodeFromWindow(window.get());
-		if (wnode != nullptr) {
-			Hy3Node* expand_actor = nullptr;
-			auto* parent = wnode->removeFromParentRecursive(&expand_actor);
-			this->nodes.remove(*wnode);
-			if (expand_actor != nullptr) expand_actor->recalcSizePosRecursive();
-			if (parent != nullptr) parent->recalcSizePosRecursive();
-		}
+		if (auto lt = window->layoutTarget()) this->removeTarget(lt);
 		return;
 	}
 
@@ -1574,15 +1558,12 @@ void Hy3Layout::applyNodeDataToWindow(Hy3Node* node, bool no_animation) {
 		window->updateWindowDecos();
 	}
 
-	// Sync the layout target's stored box so that Hyprland's recalc() produces
-	// a visible window. Use qualified base class call to set m_box without
-	// triggering CWindowTarget::updatePos() which would overwrite our gaps.
+	// Sync m_box for Hyprland's recalc(); qualified base call avoids updatePos().
 	auto target = window->layoutTarget();
 	if (target) {
 		auto targetBox = nodeBox;
 
-		// Adjust for tab bar(s): Hyprland's updatePos doesn't know about hy3's
-		// tab bar, so shrink the box to exclude tab bar space.
+		// Shrink box to exclude tab bar space that updatePos() doesn't know about.
 		static const auto tab_bar_height = ConfigValue<Hyprlang::INT>("plugin:hy3:tabs:height");
 		static const auto tab_bar_padding = ConfigValue<Hyprlang::INT>("plugin:hy3:tabs:padding");
 		double tab_offset = 0;
